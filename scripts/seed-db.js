@@ -2,7 +2,7 @@
 // Run with: npm run seed
 
 const mongoose = require('mongoose');
-require('dotenv').config({ path: '.env.local' });
+require('dotenv').config({ path: '.env' });
 
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/ecocoin';
 
