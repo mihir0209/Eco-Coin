@@ -10,7 +10,7 @@ import type {
   ApiResponse,
 } from './types';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://eco-coin-bice.vercel.app';
 
 // Generic fetch wrapper with error handling
 async function fetchAPI<T>(
