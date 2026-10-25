@@ -187,6 +187,12 @@ export async function POST(request: NextRequest) {
         (await isNonceReplayed(eventNonce));
 
       if (isDuplicate) {
+        if (eventsList.length === 1 && !Array.isArray(body?.events)) {
+          return NextResponse.json(
+            { error: `Replay detected: Nonce  has already been processed in the audit ledger` },
+            { status: 409 }
+          );
+        }
         duplicateCount++;
         results.push({
           eventId: event.eventId || `item_${i}`,
