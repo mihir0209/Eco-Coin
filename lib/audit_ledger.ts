@@ -109,16 +109,10 @@ export function computeBlockHash({
   return crypto.createHash('sha256').update(data).digest('hex');
 }
 
-let indexesSynced = false;
 async function ensureAuditIndexes() {
-  if (!indexesSynced) {
-    try {
-      await AuditLedger.syncIndexes();
-      indexesSynced = true;
-    } catch {
-      await AuditLedger.init();
-    }
-  }
+  try {
+    await AuditLedger.init();
+  } catch {}
 }
 
 /**
