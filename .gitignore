@@ -39,6 +39,11 @@ yarn-debug.log*
 Thumbs.db
 desktop.ini
 
+# Database
+data/db/
+.mongo-data/
+.mongodb-data/
+
 # Logs
 *.log
 .pnpm-debug.log*

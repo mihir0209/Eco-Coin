@@ -74,7 +74,6 @@ const DeviceCodeSchema = new mongoose.Schema<IDeviceCode>(
 );
 
 // Index for faster lookups
-DeviceCodeSchema.index({ code: 1 });
 DeviceCodeSchema.index({ isRegistered: 1 });
 
 const DeviceCode: Model<IDeviceCode> =

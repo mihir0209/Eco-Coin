@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/mongodb';
 import Transaction from '@/models/Transaction';
+import '@/models/Device';
+import '@/models/Reward';
 
 // GET /api/transactions - Get transactions by userId
 export async function GET(request: NextRequest) {

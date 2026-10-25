@@ -9,6 +9,7 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  serverExternalPackages: ['mongodb-memory-server', 'mongoose'],
 }
 
 export default nextConfig
