@@ -77,6 +77,7 @@ Eco-Coin/
 │   │   ├── notifications/      # User notification alerts
 │   │   ├── rewards/            # Marketplace rewards catalogue
 │   │   │   └── redeem/         # Reward redemption action
+│   │   ├── sync/               # Batch offline sync & cryptographic attestation API
 │   │   ├── transactions/       # Transaction history audit log
 │   │   └── users/              # User profile CRUD
 │   ├── login/                  # User login page
@@ -91,12 +92,15 @@ Eco-Coin/
 ├── hooks/                      # Custom React hooks (use-toast, use-mobile)
 ├── lib/                        # Shared utility libraries
 │   ├── api.ts                  # Client-side typed API fetcher functions
+│   ├── audit_ledger.ts         # Anti-replay nonce ledger & cryptographic hash chain
+│   ├── device_auth.ts          # Cryptographic HMAC-SHA256 attestation & signing
 │   ├── mongodb.ts              # Local database connection manager & fallback
 │   ├── seed.ts                 # Database seed definition & auto-seeder
 │   ├── types.ts                # TypeScript interface declarations
 │   └── utils.ts                # Style & class merging helpers (clsx, tailwind-merge)
 ├── models/                     # Mongoose Schema & Data Models
-│   ├── Device.ts               # User electronic devices schema
+│   ├── AuditLedger.ts          # Cryptographic hash chain ledger entry schema
+│   ├── Device.ts               # User electronic devices schema (with secretKey)
 │   ├── DeviceCode.ts           # Manufacturer verification codes schema
 │   ├── Notification.ts         # User alerts schema
 │   ├── Reward.ts               # Marketplace reward item schema
@@ -107,9 +111,19 @@ Eco-Coin/
 │   ├── local-db.js             # Standalone local persistent MongoDB daemon
 │   ├── seed-db.js              # Standalone database seed CLI script
 │   └── seed-db-fn.js           # Reusable data seeder function
-├── tests/                      # Automated test suite (Vitest)
+├── tests/                      # Automated test suite (Vitest - 76 tests)
 │   ├── api/                    # API route handler integration tests
+│   │   ├── auth.test.ts
+│   │   ├── dashboard.test.ts
+│   │   ├── devices.test.ts
+│   │   ├── notifications.test.ts
+│   │   ├── rewards.test.ts
+│   │   ├── sync.test.ts        # Batch offline sync & idempotency tests
+│   │   ├── transactions.test.ts
+│   │   └── users.test.ts
+│   ├── audit-ledger.test.ts    # Anti-replay & hash chain integrity tests
 │   ├── db.test.ts              # Database connection & pooling tests
+│   ├── device-auth.test.ts     # HMAC-SHA256 attestation tests
 │   ├── models.test.ts          # Mongoose schema validation tests
 │   └── utils.test.ts           # Helper & utility tests
 ├── .env.example                # Template environment variables
@@ -133,6 +147,27 @@ To guarantee complete offline execution without external network or MongoDB Atla
 3. **Automatic Demo Seeding**: Whenever an empty database is detected upon connection, `autoSeedIfEmpty()` automatically seeds the default user, 3 devices, manufacturer codes, rewards, and notifications.
 4. **Persistent Local Database (`npm run db`)**:
    Runs a standalone MongoDB daemon that saves all collections to `./data/db` using the WiredTiger storage engine, preserving records across server reboots.
+
+---
+
+## 4.1 Cryptographic Device Attestation & Anti-Replay Nonce Ledger
+
+To ensure zero trust security and prevent forged telemetry or replayed recycling transactions:
+
+1. **HMAC-SHA256 Device Attestation (`lib/device_auth.ts`)**:
+   - Devices authenticate by signing `(canonicalPayload:timestamp:nonce)` with their device-specific 256-bit secret key (`device.secretKey`).
+   - Constant-time verification prevents side-channel timing attacks.
+   - Unauthorized submissions or signature mismatches are rejected with HTTP 401.
+
+2. **Anti-Replay Ledger & Immutable Cryptographic Hash Chain (`lib/audit_ledger.ts` & `models/AuditLedger.ts`)**:
+   - **Timestamp Window**: Rejects any request with timestamp drift outside `±300s`.
+   - **Nonce Ledger**: Every nonce is indexed and checked before processing. Duplicate nonces trigger replay rejection (HTTP 409) or idempotent deduplication.
+   - **Cryptographic Hash Chain**: Every recorded audit entry contains `sequence`, `previousHash`, and `hash = SHA256(sequence|previousHash|deviceId|nonce|timestamp|eventType|payload|signature)`.
+   - `verifyLedgerIntegrity()` enables full cryptographic auditing to detect any database tampering.
+
+3. **Batch Sync API (`app/api/sync/route.ts`)**:
+   - Handles offline device reconnection: devices upload an array of queued events.
+   - Each event is verified and processed **idempotently**; re-submitted events return `already_processed` without duplicate side-effects.
 
 ---
 

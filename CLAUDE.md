@@ -40,7 +40,7 @@ npm run start     # Run Next.js production server
 
 ### Testing
 ```bash
-npm test          # Run full test suite using Vitest (49 tests across 10 suites)
+npm test          # Run full test suite using Vitest (76 tests across 13 suites)
 npm run test:watch # Run Vitest in interactive watch mode
 ```
 
@@ -49,10 +49,10 @@ npm run test:watch # Run Vitest in interactive watch mode
 ## Architecture & Conventions
 
 ### Directory Layout
-- `app/` — Next.js App Router pages and `/api/*` route handlers
+- `app/` — Next.js App Router pages and `/api/*` route handlers (including `/api/sync`)
 - `components/` — UI components and dialogs (`components/ui/` for shadcn primitives)
-- `models/` — Mongoose schemas (`User.ts`, `Device.ts`, `DeviceCode.ts`, `Reward.ts`, `Transaction.ts`, `Notification.ts`)
-- `lib/` — Shared helpers (`mongodb.ts`, `api.ts`, `seed.ts`, `types.ts`, `utils.ts`)
+- `models/` — Mongoose schemas (`User.ts`, `Device.ts`, `DeviceCode.ts`, `Reward.ts`, `Transaction.ts`, `Notification.ts`, `AuditLedger.ts`)
+- `lib/` — Shared helpers (`mongodb.ts`, `device_auth.ts`, `audit_ledger.ts`, `api.ts`, `seed.ts`, `types.ts`, `utils.ts`)
 - `scripts/` — Local database daemon (`local-db.js`) and database seeders (`seed-db.js`)
 - `tests/` — Vitest unit and integration test suites
 
@@ -61,6 +61,9 @@ npm run test:watch # Run Vitest in interactive watch mode
 2. **API Routes**: Return consistent JSON responses:
    - Success: `NextResponse.json({ success: true, data: ... }, { status: 200 | 201 })`
    - Errors: `NextResponse.json({ error: 'Message' }, { status: 400 | 401 | 404 | 500 })`
-3. **Mongoose Populates**: When using `.populate('modelName')`, ensure the referenced model is imported in the file to prevent Mongoose schema registration issues.
-4. **Device Code Format**: Manufacturer codes follow regex `/^[A-Z0-9]{8}-[0-9]{4}$/` (e.g., `APIP1301-2500`, `DELLXPS1-3500`, `LGNVMON2-0800`).
-5. **Path Aliasing**: Use `@/` for imports from project root (e.g. `import connectDB from '@/lib/mongodb'`).
+3. **Device Attestation**: Inbound device telemetry uses HMAC-SHA256 signatures over `(payload + timestamp + nonce)` with the device's secret key (`lib/device_auth.ts`). Unauthorized requests must be rejected with 401.
+4. **Anti-Replay Ledger**: Timestamp window is strictly ±300s. Nonces are recorded and validated against the `AuditLedger` cryptographic hash chain (`lib/audit_ledger.ts`).
+5. **Batch Offline Sync**: Devices upload queued offline events to `POST /api/sync`. Each event is processed idempotently by tracking event nonces in the ledger.
+6. **Mongoose Populates**: When using `.populate('modelName')`, ensure the referenced model is imported in the file to prevent Mongoose schema registration issues.
+7. **Device Code Format**: Manufacturer codes follow regex `/^[A-Z0-9]{8}-[0-9]{4}$/` (e.g., `APIP1301-2500`, `DELLXPS1-3500`, `LGNVMON2-0800`).
+8. **Path Aliasing**: Use `@/` for imports from project root (e.g. `import connectDB from '@/lib/mongodb'`).

@@ -1,4 +1,5 @@
 import mongoose, { Schema, model, models, Document } from 'mongoose';
+import crypto from 'crypto';
 
 export interface IDevice extends Document {
   _id: string;
@@ -14,6 +15,7 @@ export interface IDevice extends Document {
   performanceScore: number;
   isRecycled: boolean;
   recycledAt?: Date;
+  secretKey?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -76,6 +78,10 @@ const DeviceSchema = new Schema<IDevice>(
     },
     recycledAt: {
       type: Date,
+    },
+    secretKey: {
+      type: String,
+      default: () => crypto.randomBytes(32).toString('hex'),
     },
   },
   {
