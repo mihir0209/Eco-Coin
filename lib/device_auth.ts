@@ -208,11 +208,20 @@ export function extractDeviceCredentials(
   const headerTimestamp = headers.get('x-device-timestamp');
   const headerNonce = headers.get('x-device-nonce');
 
+  let rawPayload: any;
+  if (body?.payload !== undefined) {
+    rawPayload = body.payload;
+  } else if (body?.events !== undefined) {
+    rawPayload = body.events;
+  } else {
+    rawPayload = body;
+  }
+
   return {
     deviceId: headerDeviceId || body?.deviceId,
     signature: headerSignature || body?.signature,
     timestamp: headerTimestamp || body?.timestamp,
     nonce: headerNonce || body?.nonce,
-    payload: body?.payload !== undefined ? body.payload : body,
+    payload: rawPayload,
   };
 }

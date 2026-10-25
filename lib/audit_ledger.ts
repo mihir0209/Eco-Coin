@@ -109,12 +109,25 @@ export function computeBlockHash({
   return crypto.createHash('sha256').update(data).digest('hex');
 }
 
+let indexesSynced = false;
+async function ensureAuditIndexes() {
+  if (!indexesSynced) {
+    try {
+      await AuditLedger.syncIndexes();
+      indexesSynced = true;
+    } catch {
+      await AuditLedger.init();
+    }
+  }
+}
+
 /**
  * Checks if a nonce has already been registered in the audit ledger (Anti-Replay).
  */
 export async function isNonceReplayed(nonce: string): Promise<boolean> {
   if (!nonce) return true;
   await connectDB();
+  await ensureAuditIndexes();
   const existing = await AuditLedger.findOne({ nonce });
   return !!existing;
 }
@@ -144,6 +157,7 @@ export async function recordAuditEntry(
   replayed?: boolean;
 }> {
   await connectDB();
+  await ensureAuditIndexes();
 
   const {
     deviceId,
@@ -231,7 +245,7 @@ export async function recordAuditEntry(
     };
   } catch (err: any) {
     // If a duplicate key race condition occurred on nonce or sequence
-    if (err.code === 11000) {
+    if (err.code === 11000 || (err.message && err.message.includes('E11000'))) {
       return {
         success: false,
         status: 409,

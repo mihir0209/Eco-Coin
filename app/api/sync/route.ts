@@ -25,7 +25,7 @@ export interface SyncQueuedEvent {
   signature?: string;
 }
 
-// POST /api/sync - Batch sync queued offline events idempotently
+// POST /api/sync - Batch sync queued offline events idempotently or process signed device submissions
 export async function POST(request: NextRequest) {
   try {
     await connectDB();
@@ -42,23 +42,15 @@ export async function POST(request: NextRequest) {
 
     const credentials = extractDeviceCredentials(request, body);
     const deviceId = credentials.deviceId;
-    const events: SyncQueuedEvent[] = body?.events;
 
+    // 1. Authenticate Device credentials
     if (!deviceId) {
       return NextResponse.json(
-        { error: 'Bad Request: deviceId is required' },
-        { status: 400 }
+        { error: 'Unauthorized: Missing required deviceId' },
+        { status: 401 }
       );
     }
 
-    if (!Array.isArray(events)) {
-      return NextResponse.json(
-        { error: "Bad Request: 'events' array is required" },
-        { status: 400 }
-      );
-    }
-
-    // 1. Authenticate Device
     const device = await Device.findById(deviceId);
     if (!device) {
       return NextResponse.json(
@@ -75,15 +67,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 2. Batch-level Attestation & Anti-Replay
-    const batchTimestamp = credentials.timestamp;
-    const batchNonce = credentials.nonce;
-    const batchSignature = credentials.signature;
+    const requestTimestamp = credentials.timestamp;
+    const requestNonce = credentials.nonce;
+    const requestSignature = credentials.signature;
 
-    // If batch-level credentials provided, verify them
-    if (batchSignature) {
-      if (batchTimestamp !== undefined) {
-        const timeCheck = verifyTimestamp(batchTimestamp, 300);
+    // If request has no signature and events have no signatures, reject with 401
+    const hasEventSignature = Array.isArray(body?.events) && body.events.some((e: any) => !!e.signature);
+    if (!requestSignature && !hasEventSignature) {
+      return NextResponse.json(
+        { error: 'Unauthorized: Missing device signature on request or events' },
+        { status: 401 }
+      );
+    }
+
+    // 2. Request-level Attestation & Anti-Replay
+    if (requestSignature) {
+      // 2a. Timestamp validation (±300s window)
+      if (requestTimestamp !== undefined && requestTimestamp !== null) {
+        const timeCheck = verifyTimestamp(requestTimestamp, 300);
         if (!timeCheck.valid) {
           return NextResponse.json(
             { error: `Bad Request: ${timeCheck.error}` },
@@ -92,47 +93,77 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      const isValidBatch = verifyDeviceSignature({
-        payload: events,
-        timestamp: batchTimestamp || '',
-        nonce: batchNonce || '',
-        signature: batchSignature,
+      // 2b. Anti-replay check on request nonce
+      if (requestNonce) {
+        const isReplay = await isNonceReplayed(requestNonce);
+        if (isReplay) {
+          return NextResponse.json(
+            { error: `Replay detected: Nonce '${requestNonce}' has already been processed in the audit ledger` },
+            { status: 409 }
+          );
+        }
+      }
+
+      // 2c. Cryptographic HMAC-SHA256 signature verification
+      const isValid = verifyDeviceSignature({
+        payload: credentials.payload,
+        timestamp: requestTimestamp || '',
+        nonce: requestNonce || '',
+        signature: requestSignature,
         secretKey: deviceSecret,
       });
 
-      if (!isValidBatch) {
+      if (!isValid) {
         return NextResponse.json(
-          { error: 'Unauthorized: Invalid batch HMAC-SHA256 signature' },
-          { status: 401 }
-        );
-      }
-    } else {
-      // If no batch signature, every event MUST be individually signed or request must be signed
-      const anyEventSigned = events.some((e) => !!e.signature);
-      if (!anyEventSigned && events.length > 0) {
-        return NextResponse.json(
-          { error: 'Unauthorized: Missing device signature on batch or events' },
+          { error: 'Unauthorized: Invalid HMAC-SHA256 signature' },
           { status: 401 }
         );
       }
     }
 
-    // 3. Process Events Idempotently
+    // 3. Extract events list (support batch events array or single event payload)
+    let eventsList: SyncQueuedEvent[] = [];
+    if (Array.isArray(body?.events)) {
+      eventsList = body.events;
+    } else if (
+      body?.payload !== undefined ||
+      body?.type !== undefined ||
+      body?.quantity !== undefined ||
+      body?.health !== undefined
+    ) {
+      eventsList = [
+        {
+          type: body.type || body.eventType || 'telemetry',
+          payload: body.payload !== undefined ? body.payload : { ...body },
+          nonce: requestNonce,
+          signature: requestSignature,
+          timestamp: requestTimestamp,
+        },
+      ];
+    } else {
+      return NextResponse.json(
+        { error: "Bad Request: 'events' array or valid payload is required" },
+        { status: 400 }
+      );
+    }
+
+    // 4. Process Events Idempotently
     const results: any[] = [];
     let processedCount = 0;
     let duplicateCount = 0;
+    const seenNoncesInBatch = new Set<string>();
 
-    for (let i = 0; i < events.length; i++) {
-      const event = events[i];
+    for (let i = 0; i < eventsList.length; i++) {
+      const event = eventsList[i];
       const eventNonce =
         event.nonce ||
-        (event.eventId ? `evt_${event.eventId}` : `${batchNonce || 'sync'}_item_${i}`);
+        (event.eventId ? `evt_${event.eventId}` : `${requestNonce || 'sync'}_item_${i}`);
 
-      // Verify event-level signature if present
-      if (event.signature) {
+      // Verify event-level signature if present and distinct from validated request signature
+      if (event.signature && event.signature !== requestSignature) {
         const isValid = verifyDeviceSignature({
           payload: event.payload,
-          timestamp: event.timestamp || batchTimestamp || '',
+          timestamp: event.timestamp || requestTimestamp || '',
           nonce: eventNonce,
           signature: event.signature,
           secretKey: deviceSecret,
@@ -150,9 +181,12 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Check Anti-Replay Nonce Ledger
-      const alreadyProcessed = await isNonceReplayed(eventNonce);
-      if (alreadyProcessed) {
+      // Check Anti-Replay: duplicate within current batch OR already in audit ledger
+      const isDuplicate =
+        seenNoncesInBatch.has(eventNonce) ||
+        (await isNonceReplayed(eventNonce));
+
+      if (isDuplicate) {
         duplicateCount++;
         results.push({
           eventId: event.eventId || `item_${i}`,
@@ -163,6 +197,8 @@ export async function POST(request: NextRequest) {
         });
         continue;
       }
+
+      seenNoncesInBatch.add(eventNonce);
 
       // Execute Business Logic Idempotently
       const payload = event.payload || {};
@@ -224,10 +260,10 @@ export async function POST(request: NextRequest) {
       const auditResult = await recordAuditEntry({
         deviceId: device._id.toString(),
         nonce: eventNonce,
-        timestamp: event.timestamp || batchTimestamp || new Date(),
+        timestamp: event.timestamp || requestTimestamp || new Date(),
         eventType: event.type || 'unknown',
         payload,
-        signature: event.signature || batchSignature || 'batch_signed',
+        signature: event.signature || requestSignature || 'batch_signed',
         enforceWindow: false, // Offline queued events may have historical timestamps
       });
 
@@ -241,7 +277,28 @@ export async function POST(request: NextRequest) {
           sequence: auditResult.entry.sequence,
           hash: auditResult.entry.hash,
         });
+      } else if (auditResult.replayed || auditResult.status === 409) {
+        if (eventsList.length === 1) {
+          return NextResponse.json(
+            { error: auditResult.error || `Replay detected: Nonce '${eventNonce}' has already been processed in the audit ledger` },
+            { status: 409 }
+          );
+        }
+        duplicateCount++;
+        results.push({
+          eventId: event.eventId || `item_${i}`,
+          nonce: eventNonce,
+          type: event.type,
+          status: 'already_processed',
+          replayed: true,
+        });
       } else {
+        if (eventsList.length === 1) {
+          return NextResponse.json(
+            { error: auditResult.error || 'Failed to record audit entry' },
+            { status: auditResult.status || 500 }
+          );
+        }
         results.push({
           eventId: event.eventId || `item_${i}`,
           nonce: eventNonce,
