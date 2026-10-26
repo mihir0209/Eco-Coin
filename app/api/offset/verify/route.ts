@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/mongodb";
-import { verifyOffsetCertificate } from "@/lib/offset_retirement";
+import { verifyRetirementCertificate } from "@/lib/offset_retirement";
 
 export async function GET(req: NextRequest) {
   try {
@@ -14,10 +14,10 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const result = await verifyOffsetCertificate(certificateId);
+    const result = await verifyRetirementCertificate(certificateId);
     if (!result.valid) {
       return NextResponse.json(
-        { valid: false, error: result.reason },
+        { valid: false, error: result.error },
         { status: 404 }
       );
     }

@@ -1,27 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/mongodb";
-import { retireCarbonOffset } from "@/lib/offset_retirement";
+import { mintRetirementCertificate } from "@/lib/offset_retirement";
 
 export async function POST(req: NextRequest) {
   try {
     await connectDB();
     const body = await req.json();
-    const { userId, beneficiaryName, scope, co2KgRetired, retirementReason } = body;
+    const { certificateId, userId, beneficiaryName, tonsRetired, creditStandard, retirementReason } = body;
 
-    if (!userId || !beneficiaryName || !co2KgRetired) {
+    if (!certificateId || !userId || !beneficiaryName || !tonsRetired) {
       return NextResponse.json(
-        { error: "Missing required fields: userId, beneficiaryName, co2KgRetired" },
+        { error: "Missing required fields: certificateId, userId, beneficiaryName, tonsRetired" },
         { status: 400 }
       );
     }
 
-    const cert = await retireCarbonOffset({
+    const cert = await mintRetirementCertificate(
+      certificateId,
       userId,
       beneficiaryName,
-      scope,
-      co2KgRetired: Number(co2KgRetired),
-      retirementReason,
-    });
+      Number(tonsRetired),
+      creditStandard || "VERRA",
+      retirementReason || "Voluntary offset"
+    );
 
     return NextResponse.json(
       { success: true, message: "Carbon offset retired successfully.", certificate: cert },
